@@ -63,3 +63,39 @@ def resolve_images_dir(path: Path) -> Path:
                 return (cand / "images").resolve()
             return cand.resolve()
     raise FileNotFoundError(f"Source folder not found: {path}")
+
+
+def resolve_source(name: str | Path, films_dir: Path | None = None) -> Path:
+    """
+    Accept a full path, a filename, or a stem like '24' / '24.cine'.
+    Search order: as given → data/films / name → data/films / name.cine
+    """
+    films = films_dir or (REPO_ROOT / "data" / "films")
+    raw = Path(name)
+    candidates = [raw]
+    if not raw.is_absolute():
+        candidates.extend(
+            [
+                films / raw,
+                films / raw.name,
+                films / f"{raw.stem}.cine",
+                REPO_ROOT / "data" / "films" / f"{raw.stem}.cine",
+                Path("data") / "films" / f"{raw.stem}.cine",
+            ]
+        )
+        if raw.suffix == "":
+            candidates.append(films / f"{raw.name}.cine")
+
+    seen: set[str] = set()
+    for cand in candidates:
+        resolved = cand.resolve() if cand.exists() else cand
+        key = resolved.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        if cand.exists():
+            return cand.resolve()
+
+    raise FileNotFoundError(
+        f"Source not found: {name}. Tried: " + ", ".join(str(c) for c in candidates[:6])
+    )

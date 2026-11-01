@@ -38,30 +38,51 @@ def load_class_names(roots: list[Path]) -> list[str]:
     return ["rising", "sitting"]
 
 
+def split_one_dataset(
+    root: Path,
+    val_ratio: float,
+    rng: random.Random,
+) -> tuple[list[tuple[str, Path, Path | None]], list[tuple[str, Path, Path | None]]]:
+    """80/20 (or val_ratio) split inside a single dataset_*_clean folder."""
+    pairs = paired_samples(root)
+    samples = [(f"{root.name}__{img.stem}", img, lab) for img, lab in pairs]
+    if not samples:
+        return [], []
+
+    rng.shuffle(samples)
+    n = len(samples)
+    if n == 1:
+        # Too small for a local val holdout — keep in train only.
+        return samples, []
+
+    n_val = max(1, int(round(n * val_ratio)))
+    n_val = min(n_val, n - 1)
+    return samples[n_val:], samples[:n_val]
+
+
 def prepare(
     datasets: list[Path],
     out_dir: Path,
     val_ratio: float,
     seed: int,
 ) -> Path:
-    samples: list[tuple[str, Path, Path | None]] = []
-    for root in datasets:
-        for img, lab in paired_samples(root):
-            key = f"{root.name}__{img.stem}"
-            samples.append((key, img, lab))
-
-    if not samples:
-        raise RuntimeError("No images found in the given datasets")
-
     rng = random.Random(seed)
-    rng.shuffle(samples)
-    n_val = max(1, int(round(len(samples) * val_ratio))) if len(samples) > 1 else 1
-    if len(samples) <= 2:
-        n_val = 1
-    n_val = min(n_val, len(samples) - 1) if len(samples) > 1 else 1
-    val_set = {s[0] for s in samples[:n_val]}
-    train_set = [s for s in samples if s[0] not in val_set]
-    val_list = [s for s in samples if s[0] in val_set]
+    train_set: list[tuple[str, Path, Path | None]] = []
+    val_list: list[tuple[str, Path, Path | None]] = []
+    per_ds: list[str] = []
+
+    for root in datasets:
+        train_part, val_part = split_one_dataset(root, val_ratio, rng)
+        train_set.extend(train_part)
+        val_list.extend(val_part)
+        per_ds.append(f"{root.name}: train={len(train_part)} val={len(val_part)}")
+
+    if not train_set:
+        raise RuntimeError("No images found in the given datasets")
+    if not val_list:
+        raise RuntimeError(
+            "Val set is empty after per-dataset split. Need at least 2 images in some dataset."
+        )
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -96,6 +117,8 @@ def prepare(
     )
 
     print(f"datasets : {', '.join(d.name for d in datasets)}")
+    for line in per_ds:
+        print(f"  {line}")
     print(f"train    : {n_train}")
     print(f"val      : {n_val_copied}")
     print(f"classes  : {names}")
